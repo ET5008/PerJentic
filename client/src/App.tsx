@@ -20,8 +20,10 @@ export default function App() {
   const eventSourceRef = useRef<EventSource | null>(null)
 
   function handleEvent(e: SSEEvent) {
+    console.log(`[SSE] event received: type=${e.type}`, e)
     switch (e.type) {
       case 'round_start':
+        console.log(`[SSE] round_start → round ${e.round}`)
         setRounds((prev) => [
           ...prev,
           { round: e.round, agents: [], critique: null, status: 'running' },
@@ -29,6 +31,7 @@ export default function App() {
         break
 
       case 'agent_output': {
+        console.log(`[SSE] agent_output → round ${e.round}, agent ${e.agent_id} (${e.persona}), length=${e.content.length}`)
         const output: AgentOutputData = {
           agent_id: e.agent_id,
           persona: e.persona,
@@ -43,6 +46,7 @@ export default function App() {
       }
 
       case 'critique': {
+        console.log(`[SSE] critique → round ${e.round}, directives=${e.directives.length}`, e.directives)
         const critique: CritiqueData = {
           per_agent: e.per_agent,
           cross_agent: e.cross_agent,
@@ -55,6 +59,7 @@ export default function App() {
       }
 
       case 'round_complete':
+        console.log(`[SSE] round_complete → round ${e.round}, action_required=${e.action_required}`)
         setRounds((prev) =>
           prev.map((r) =>
             r.round === e.round
@@ -68,6 +73,7 @@ export default function App() {
         break
 
       case 'session_complete':
+        console.log(`[SSE] session_complete → total_rounds=${e.total_rounds}`)
         setRounds((prev) =>
           prev.map((r) => (r.status !== 'complete' ? { ...r, status: 'complete' } : r))
         )
@@ -76,6 +82,7 @@ export default function App() {
         break
 
       case 'error':
+        console.error(`[SSE] error →`, e.message)
         setErrorMsg(e.message)
         setStatus('error')
         eventSourceRef.current?.close()
@@ -84,31 +91,38 @@ export default function App() {
   }
 
   async function handleStart() {
+    console.log('[App] starting session', config)
     setRounds([])
     setStatus('running')
     setErrorMsg(null)
 
     eventSourceRef.current?.close()
 
-    await fetch(`${API}/api/run`, {
+    console.log('[App] POST /api/run')
+    const runRes = await fetch(`${API}/api/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(config),
     })
+    console.log('[App] /api/run response', await runRes.json())
 
+    console.log('[App] opening SSE stream at /api/stream')
     const es = new EventSource(`${API}/api/stream`)
     eventSourceRef.current = es
+
+    es.onopen = () => console.log('[SSE] connection opened')
 
     es.onmessage = (event) => {
       try {
         const data: SSEEvent = JSON.parse(event.data)
         handleEvent(data)
-      } catch {
-        // ignore malformed messages
+      } catch (err) {
+        console.warn('[SSE] failed to parse message:', event.data, err)
       }
     }
 
-    es.onerror = () => {
+    es.onerror = (err) => {
+      console.error('[SSE] connection error', err)
       if (status !== 'complete') {
         setErrorMsg('Connection to server lost.')
         setStatus('error')
@@ -118,11 +132,13 @@ export default function App() {
   }
 
   async function handleApprove(action: 'approve' | 'skip') {
+    console.log(`[App] user action: ${action}`)
     await fetch(`${API}/api/approve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action }),
     })
+    console.log('[App] approve gate released, resuming loop')
     // Mark the round that was awaiting approval as complete
     setRounds((prev) =>
       prev.map((r) => (r.status === 'awaiting_approval' ? { ...r, status: 'complete' } : r))

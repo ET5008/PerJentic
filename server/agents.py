@@ -66,6 +66,7 @@ async def run_worker(
 
     user_message = f"Task: {task}\n\n{directives_block}"
 
+    print(f"[worker:{agent.id}] calling Perplexity sonar-pro | directives={len(directives)}")
     response = await client.chat.completions.create(
         model=MODEL,
         messages=[
@@ -73,7 +74,9 @@ async def run_worker(
             {"role": "user", "content": user_message},
         ],
     )
-    return response.choices[0].message.content or ""
+    result = response.choices[0].message.content or ""
+    print(f"[worker:{agent.id}] response received | len={len(result)}")
+    return result
 
 
 async def run_critic(
@@ -104,6 +107,7 @@ async def run_critic(
         "Provide your meta-critique as a JSON object."
     )
 
+    print(f"[critic] calling Perplexity sonar-pro with {len(agent_outputs)} agent outputs")
     response = await client.chat.completions.create(
         model=MODEL,
         messages=[
@@ -113,6 +117,7 @@ async def run_critic(
     )
 
     raw = response.choices[0].message.content or ""
+    print(f"[critic] raw response received | len={len(raw)} | preview={raw[:120]!r}")
 
     # Strip markdown fences if present
     cleaned = raw.strip()
@@ -122,5 +127,8 @@ async def run_critic(
             cleaned = cleaned[4:]
         cleaned = cleaned.rstrip("`").strip()
 
+    print(f"[critic] parsing JSON | cleaned preview={cleaned[:120]!r}")
     parsed = json.loads(cleaned)
-    return CritiqueResult.model_validate(parsed)
+    result = CritiqueResult.model_validate(parsed)
+    print(f"[critic] validated OK | directives={result.directives}")
+    return result
