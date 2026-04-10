@@ -1,4 +1,4 @@
-import { AgentOutputData } from '../types'
+import type { AgentOutputData } from '../types'
 
 interface AgentOutputProps {
   output: AgentOutputData

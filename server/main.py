@@ -2,6 +2,8 @@ import asyncio
 import json
 import os
 
+from pathlib import Path
+
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from agents import AGENTS, run_critic, run_worker
 from models import ApproveRequest, CritiqueResult, RunRequest, SessionState
 
-load_dotenv()
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 app = FastAPI()
 

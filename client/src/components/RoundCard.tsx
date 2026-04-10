@@ -1,4 +1,4 @@
-import { RoundData } from '../types'
+import type { RoundData } from '../types'
 import AgentOutput from './AgentOutput'
 import CritiquePanel from './CritiquePanel'
 

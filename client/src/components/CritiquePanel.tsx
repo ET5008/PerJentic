@@ -1,4 +1,4 @@
-import { CritiqueData } from '../types'
+import type { CritiqueData } from '../types'
 import DirectiveBadge from './DirectiveBadge'
 
 interface CritiquePanelProps {

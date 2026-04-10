@@ -33,3 +33,6 @@ export interface SessionConfig {
 }
 
 export type AppStatus = 'idle' | 'running' | 'awaiting_approval' | 'complete' | 'error'
+
+// Runtime sentinel so this module is never empty after TypeScript erasure
+export const _types = true

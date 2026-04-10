@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import RoundCard from './components/RoundCard'
-import { AgentOutputData, AppStatus, CritiqueData, RoundData, SessionConfig, SSEEvent } from './types'
+import type { AgentOutputData, AppStatus, CritiqueData, RoundData, SessionConfig, SSEEvent } from './types'
 
 const DEFAULT_TASK =
   'Analyze the current state of neurotech and BCI companies — what\'s promising, what\'s overhyped, and what\'s the best investment thesis right now?'
