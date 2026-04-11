@@ -1,10 +1,12 @@
 import type { RoundData } from '../types'
 import AgentOutput from './AgentOutput'
 import CritiquePanel from './CritiquePanel'
+import type { DirectiveControls } from './CritiquePanel'
 
 interface RoundCardProps {
   round: RoundData
   totalAgents: number
+  directiveControls?: DirectiveControls
 }
 
 function SkeletonCard() {
@@ -25,7 +27,7 @@ function SkeletonCard() {
   )
 }
 
-export default function RoundCard({ round, totalAgents }: RoundCardProps) {
+export default function RoundCard({ round, totalAgents, directiveControls }: RoundCardProps) {
   const skeletonCount = totalAgents - round.agents.length
 
   return (
@@ -64,7 +66,7 @@ export default function RoundCard({ round, totalAgents }: RoundCardProps) {
         ))}
       </div>
 
-      {round.critique && <CritiquePanel critique={round.critique} />}
+      {round.critique && <CritiquePanel critique={round.critique} controls={directiveControls} />}
     </div>
   )
 }

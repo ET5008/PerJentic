@@ -9,8 +9,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from agents import AGENTS, run_critic, run_worker
-from models import ApproveRequest, CritiqueResult, RunRequest, SessionState
+from agents import AGENTS, run_critic, run_synthesizer, run_worker
+from models import ActionPlanResult, ApproveRequest, CritiqueResult, RunRequest, SessionState
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
@@ -48,8 +48,8 @@ async def run_loop(s: SessionState) -> None:
 
         # Run all workers in parallel
         worker_tasks = [
-            run_worker(agent, s.task, s.directives, api_key)
-            for agent in AGENTS
+            run_worker(agent, s.task, s.directives, api_key, index=i)
+            for i, agent in enumerate(AGENTS)
         ]
         print(f"[loop] dispatching {len(worker_tasks)} workers in parallel")
         try:
@@ -72,6 +72,7 @@ async def run_loop(s: SessionState) -> None:
                 "persona": agent.name,
                 "content": content,
             })
+        s.all_round_outputs.append(agent_outputs)
 
         # Run critic
         print(f"[loop] calling critic with {len(agent_outputs)} agent outputs")
@@ -114,7 +115,18 @@ async def run_loop(s: SessionState) -> None:
             s.approve_event.clear()
             print(f"[loop] approve gate released, advancing to round {round_num + 1}")
 
-    print(f"[loop] session complete after {s.max_rounds} rounds")
+    print(f"[loop] session complete after {s.max_rounds} rounds — running synthesizer")
+    try:
+        plan: ActionPlanResult = await run_synthesizer(s.task, s.all_round_outputs, api_key)
+        await emit(s.sse_queue, {
+            "type": "action_plan",
+            "summary": plan.summary,
+            "actions": plan.actions,
+        })
+        print(f"[loop] action_plan emitted | actions={len(plan.actions)}")
+    except Exception as exc:
+        print(f"[loop] synthesizer error (non-fatal): {exc}")
+
     await emit(s.sse_queue, {
         "type": "session_complete",
         "total_rounds": s.max_rounds,
@@ -176,10 +188,13 @@ async def api_stream():
 
 @app.post("/api/approve")
 async def api_approve(req: ApproveRequest):
-    print(f"[api] POST /api/approve | action={req.action}")
+    print(f"[api] POST /api/approve | action={req.action} | directives={req.directives}")
     if session is None:
         print("[api] /api/approve — no active session")
         return {"status": "error", "message": "No active session"}
+    if req.directives is not None:
+        session.directives = req.directives
+        print(f"[api] directives overridden → {session.directives}")
     session.approve_event.set()
     print("[api] approve_event set — loop unblocked")
     return {"status": "ok", "action": req.action}

@@ -3,6 +3,7 @@ export type SSEEvent =
   | { type: 'agent_output'; round: number; agent_id: string; persona: string; content: string }
   | { type: 'critique'; round: number; per_agent: Record<string, string>; cross_agent: string; directives: string[] }
   | { type: 'round_complete'; round: number; action_required: boolean }
+  | { type: 'action_plan'; summary: string; actions: string[] }
   | { type: 'session_complete'; total_rounds: number; message: string }
   | { type: 'error'; message: string }
 
@@ -23,6 +24,11 @@ export interface RoundData {
   agents: AgentOutputData[]
   critique: CritiqueData | null
   status: 'running' | 'awaiting_approval' | 'complete'
+}
+
+export interface ActionPlanData {
+  summary: string
+  actions: string[]
 }
 
 export interface SessionConfig {

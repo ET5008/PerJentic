@@ -1,10 +1,12 @@
+import asyncio
 import json
 from dataclasses import dataclass
-from openai import AsyncOpenAI
-from models import CritiqueResult
+from perplexity import AsyncPerplexity
+from models import ActionPlanResult, CritiqueResult
 
-PERPLEXITY_BASE_URL = "https://api.perplexity.ai"
-MODEL = "sonar-pro"
+PRESET = "pro-search"       # 3 web-search steps per worker call
+MAX_STEPS = 3
+WORKER_STAGGER_DELAY = 0.4  # seconds between worker launches (Tier-0 rate limit: 1 QPS)
 
 
 @dataclass
@@ -53,8 +55,13 @@ async def run_worker(
     task: str,
     directives: list[str],
     api_key: str,
+    index: int = 0,
 ) -> str:
-    client = AsyncOpenAI(base_url=PERPLEXITY_BASE_URL, api_key=api_key)
+    # Stagger launches to stay within Tier-0 rate limit (1 QPS)
+    if index > 0:
+        await asyncio.sleep(index * WORKER_STAGGER_DELAY)
+
+    client = AsyncPerplexity(api_key=api_key)
 
     if directives:
         directives_block = (
@@ -66,15 +73,14 @@ async def run_worker(
 
     user_message = f"Task: {task}\n\n{directives_block}"
 
-    print(f"[worker:{agent.id}] calling Perplexity sonar-pro | directives={len(directives)}")
-    response = await client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {"role": "system", "content": agent.system_prompt},
-            {"role": "user", "content": user_message},
-        ],
+    print(f"[worker:{agent.id}] calling Perplexity Agent API | preset={PRESET} | index={index}")
+    response = await client.responses.create(
+        preset=PRESET,
+        input=user_message,
+        instructions=agent.system_prompt,
+        max_steps=MAX_STEPS,
     )
-    result = response.choices[0].message.content or ""
+    result = response.output_text or ""
     print(f"[worker:{agent.id}] response received | len={len(result)}")
     return result
 
@@ -84,21 +90,22 @@ async def run_critic(
     agent_outputs: dict[str, str],
     api_key: str,
 ) -> CritiqueResult:
-    client = AsyncOpenAI(base_url=PERPLEXITY_BASE_URL, api_key=api_key)
+    client = AsyncPerplexity(api_key=api_key)
 
     outputs_block = "\n\n".join(
         f"=== Agent {agent_id} ===\n{content}"
         for agent_id, content in agent_outputs.items()
     )
 
-    system_prompt = (
+    instructions = (
         "You are a meta-analyst reviewing parallel analyses from multiple agents. "
-        "You MUST respond with ONLY a JSON object — no markdown fences, no commentary before or after. "
+        "You MUST respond with ONLY a JSON object — no markdown fences, no preamble, no commentary. "
         "The JSON must match this exact schema:\n"
         '{"per_agent": {"<agent_id>": "<what they did well + specific gap>"}, '
         '"cross_agent": "<patterns and disagreements across all agents>", '
         '"directives": ["<concrete improvement instruction 1>", "<concrete improvement instruction 2>", ...]}\n'
-        "Directives should be specific, actionable instructions that all agents should incorporate in the next round."
+        "Directives should be specific, actionable instructions that all agents should incorporate in the next round. "
+        "Do not include any text outside the JSON object. Start your response with { and end with }."
     )
 
     user_message = (
@@ -107,16 +114,15 @@ async def run_critic(
         "Provide your meta-critique as a JSON object."
     )
 
-    print(f"[critic] calling Perplexity sonar-pro with {len(agent_outputs)} agent outputs")
-    response = await client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ],
+    print(f"[critic] calling Perplexity Agent API | preset=fast-search | agents={len(agent_outputs)}")
+    response = await client.responses.create(
+        preset="fast-search",
+        input=user_message,
+        instructions=instructions,
+        max_steps=1,
     )
 
-    raw = response.choices[0].message.content or ""
+    raw = response.output_text or ""
     print(f"[critic] raw response received | len={len(raw)} | preview={raw[:120]!r}")
 
     # Strip markdown fences if present
@@ -127,8 +133,77 @@ async def run_critic(
             cleaned = cleaned[4:]
         cleaned = cleaned.rstrip("`").strip()
 
+    # Fallback: extract JSON substring if model added surrounding prose
+    if not cleaned.startswith("{"):
+        start = cleaned.find("{")
+        end = cleaned.rfind("}") + 1
+        if start != -1 and end > start:
+            cleaned = cleaned[start:end]
+
     print(f"[critic] parsing JSON | cleaned preview={cleaned[:120]!r}")
     parsed = json.loads(cleaned)
     result = CritiqueResult.model_validate(parsed)
     print(f"[critic] validated OK | directives={result.directives}")
+    return result
+
+
+async def run_synthesizer(
+    task: str,
+    all_round_outputs: list[dict[str, str]],
+    api_key: str,
+) -> ActionPlanResult:
+    """Final synthesis pass: distill all rounds into a concise action plan."""
+    client = AsyncPerplexity(api_key=api_key)
+
+    rounds_block = "\n\n".join(
+        "=== Round {} ===\n{}".format(
+            round_num + 1,
+            "\n\n".join(f"Agent {aid}:\n{content}" for aid, content in outputs.items()),
+        )
+        for round_num, outputs in enumerate(all_round_outputs)
+    )
+
+    instructions = (
+        "You are a senior advisor synthesizing a multi-round research process into a final action plan. "
+        "You MUST respond with ONLY a JSON object — no markdown fences, no preamble, no commentary. "
+        "The JSON must match this exact schema:\n"
+        '{"summary": "<2-3 sentence executive summary of the overall conclusion>", '
+        '"actions": ["<concise action item 1>", "<concise action item 2>", ...]}\n'
+        "Actions should be concrete, prioritized, and directly actionable by the user — not vague recommendations. "
+        "Aim for 4-7 action items. Do not include any text outside the JSON object. Start with { and end with }."
+    )
+
+    user_message = (
+        f"Task: {task}\n\n"
+        f"Research across {len(all_round_outputs)} round(s):\n\n{rounds_block}\n\n"
+        "Produce a final action plan JSON."
+    )
+
+    print(f"[synthesizer] calling Perplexity Agent API | rounds={len(all_round_outputs)}")
+    response = await client.responses.create(
+        preset="fast-search",
+        input=user_message,
+        instructions=instructions,
+        max_steps=1,
+    )
+
+    raw = response.output_text or ""
+    print(f"[synthesizer] raw response | len={len(raw)} | preview={raw[:120]!r}")
+
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.lstrip("`")
+        if cleaned.startswith("json"):
+            cleaned = cleaned[4:]
+        cleaned = cleaned.rstrip("`").strip()
+
+    if not cleaned.startswith("{"):
+        start = cleaned.find("{")
+        end = cleaned.rfind("}") + 1
+        if start != -1 and end > start:
+            cleaned = cleaned[start:end]
+
+    parsed = json.loads(cleaned)
+    result = ActionPlanResult.model_validate(parsed)
+    print(f"[synthesizer] validated OK | actions={len(result.actions)}")
     return result

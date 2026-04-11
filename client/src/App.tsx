@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
+import ActionPlanPanel from './components/ActionPlanPanel'
 import RoundCard from './components/RoundCard'
-import type { AgentOutputData, AppStatus, CritiqueData, RoundData, SessionConfig, SSEEvent } from './types'
+import type { ActionPlanData, AgentOutputData, AppStatus, CritiqueData, RoundData, SessionConfig, SSEEvent } from './types'
 
 const DEFAULT_TASK =
   'Analyze the current state of neurotech and BCI companies — what\'s promising, what\'s overhyped, and what\'s the best investment thesis right now?'
@@ -17,6 +18,8 @@ export default function App() {
   const [rounds, setRounds] = useState<RoundData[]>([])
   const [status, setStatus] = useState<AppStatus>('idle')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [pendingDirectives, setPendingDirectives] = useState<string[]>([])
+  const [actionPlan, setActionPlan] = useState<ActionPlanData | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
 
   function handleEvent(e: SSEEvent) {
@@ -55,6 +58,7 @@ export default function App() {
         setRounds((prev) =>
           prev.map((r) => (r.round === e.round ? { ...r, critique } : r))
         )
+        setPendingDirectives(e.directives)
         break
       }
 
@@ -70,6 +74,11 @@ export default function App() {
         if (e.action_required) {
           setStatus('awaiting_approval')
         }
+        break
+
+      case 'action_plan':
+        console.log(`[SSE] action_plan → actions=${e.actions.length}`)
+        setActionPlan({ summary: e.summary, actions: e.actions })
         break
 
       case 'session_complete':
@@ -95,6 +104,7 @@ export default function App() {
     setRounds([])
     setStatus('running')
     setErrorMsg(null)
+    setActionPlan(null)
 
     eventSourceRef.current?.close()
 
@@ -132,18 +142,41 @@ export default function App() {
   }
 
   async function handleApprove(action: 'approve' | 'skip') {
-    console.log(`[App] user action: ${action}`)
+    const directives = action === 'approve' ? pendingDirectives : []
+    console.log(`[App] user action: ${action} | directives:`, directives)
     await fetch(`${API}/api/approve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({ action, directives }),
     })
     console.log('[App] approve gate released, resuming loop')
-    // Mark the round that was awaiting approval as complete
+    setPendingDirectives([])
     setRounds((prev) =>
       prev.map((r) => (r.status === 'awaiting_approval' ? { ...r, status: 'complete' } : r))
     )
     setStatus('running')
+  }
+
+  function toggleDirective(text: string) {
+    setPendingDirectives((prev) =>
+      prev.includes(text) ? prev.filter((d) => d !== text) : [...prev, text]
+    )
+  }
+
+  function editDirective(oldText: string, newText: string) {
+    setPendingDirectives((prev) =>
+      prev.includes(oldText)
+        ? prev.map((d) => (d === oldText ? newText : d))
+        : prev
+    )
+  }
+
+  function deleteDirective(text: string) {
+    setPendingDirectives((prev) => prev.filter((d) => d !== text))
+  }
+
+  function addDirective(text: string) {
+    setPendingDirectives((prev) => [...prev, text])
   }
 
   const isRunning = status === 'running' || status === 'awaiting_approval'
@@ -237,8 +270,22 @@ export default function App() {
 
         {/* Round cards */}
         {rounds.map((round) => (
-          <RoundCard key={round.round} round={round} totalAgents={config.agents} />
+          <RoundCard
+            key={round.round}
+            round={round}
+            totalAgents={config.agents}
+            directiveControls={round.status === 'awaiting_approval' ? {
+              pendingDirectives,
+              onToggle: toggleDirective,
+              onEdit: editDirective,
+              onDelete: deleteDirective,
+              onAdd: addDirective,
+            } : undefined}
+          />
         ))}
+
+        {/* Action plan */}
+        {actionPlan && <ActionPlanPanel plan={actionPlan} />}
 
         {/* Complete banner */}
         {status === 'complete' && (
@@ -253,8 +300,10 @@ export default function App() {
         <div className="fixed bottom-0 inset-x-0 bg-gray-900/95 backdrop-blur border-t border-gray-700 px-6 py-4">
           <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
             <div>
-              <p className="text-sm font-semibold text-gray-200">Round complete — review the critique above.</p>
-              <p className="text-xs text-gray-500">Approve to incorporate directives, or skip to run the next round as-is.</p>
+              <p className="text-sm font-semibold text-gray-200">Round complete — review and edit directives above.</p>
+              <p className="text-xs text-gray-500">
+                {pendingDirectives.length} directive{pendingDirectives.length !== 1 ? 's' : ''} selected for next round.
+              </p>
             </div>
             <div className="flex gap-3">
               <button
@@ -267,7 +316,7 @@ export default function App() {
                 className="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold transition-colors"
                 onClick={() => handleApprove('approve')}
               >
-                Approve &amp; Continue
+                Approve &amp; Continue{pendingDirectives.length > 0 ? ` (${pendingDirectives.length})` : ''}
               </button>
             </div>
           </div>

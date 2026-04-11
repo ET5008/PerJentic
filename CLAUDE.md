@@ -1,12 +1,12 @@
 # PerJentic — Claude Context
 
 ## What this project is
-A full-stack hackathon demo: a multi-agent critique-revise loop powered by the **Perplexity Sonar API**. N worker agents analyze a task in parallel across multiple rounds. After each round a critic agent synthesizes their output and generates improvement directives. The user approves or skips between rounds. The UI streams round progress in real time via SSE.
+A full-stack hackathon demo: a multi-agent critique-revise loop powered by the **Perplexity Agent API**. N worker agents analyze a task in parallel across multiple rounds. After each round a critic agent synthesizes their output and generates improvement directives. The user approves or skips between rounds. The UI streams round progress in real time via SSE.
 
 ## Stack
 - **Backend:** FastAPI + Python (async) — `server/`
 - **Frontend:** React 19 + TypeScript + Tailwind CSS 4 + Vite — `client/`
-- **LLM:** Perplexity Sonar API (`sonar-pro` model, OpenAI-compatible format)
+- **LLM:** Perplexity Agent API (`pro-search` preset for workers, `fast-search` for critic; `perplexityai` PyPI package, imports as `perplexity`)
 - **No database** — all state is in-memory for the session
 
 ## Project structure
@@ -51,10 +51,11 @@ Open http://localhost:5173
 
 ## Key architecture decisions
 - **Single global `session`** in `main.py` — one active session at a time, no auth, no persistence
-- **`asyncio.gather`** for parallel worker calls — all agents run truly simultaneously
+- **`asyncio.gather`** for parallel worker calls — workers staggered by `index * 0.4s` to stay within Perplexity Tier-0 1 QPS limit while still running concurrently
 - **`asyncio.Event`** for the approve gate — `run_loop` suspends at `await approve_event.wait()` without blocking FastAPI
 - **SSE keepalive** — `asyncio.wait_for(queue.get(), timeout=15)` yields `: keepalive\n\n` to prevent connection drops at the approve gate
-- **Critic JSON** — stripped of markdown fences, validated with `CritiqueResult.model_validate()` before emitting to frontend
+- **Critic JSON** — stripped of markdown fences + prose-wrapper extraction fallback, validated with `CritiqueResult.model_validate()` before emitting to frontend; critic uses `fast-search` preset (1 step) since it only synthesizes already-retrieved content
+- **Agent API call shape** — `client.responses.create(preset=..., input=user_message, instructions=system_prompt, max_steps=N)`; response text via `response.output_text` property
 - **`import type`** on all type-only imports in `.tsx` files — required for Vite ESM to resolve `types.ts` correctly
 - **`.env` at project root** — `main.py` loads it via `Path(__file__).parent.parent / ".env"`
 

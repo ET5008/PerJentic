@@ -13,12 +13,18 @@ class RunRequest(BaseModel):
 
 class ApproveRequest(BaseModel):
     action: Literal["approve", "skip"]
+    directives: list[str] | None = None
 
 
 class CritiqueResult(BaseModel):
     per_agent: dict[str, str]
     cross_agent: str
     directives: list[str]
+
+
+class ActionPlanResult(BaseModel):
+    summary: str
+    actions: list[str]
 
 
 @dataclass
@@ -28,5 +34,6 @@ class SessionState:
     max_rounds: int
     round_num: int = 0
     directives: list[str] = field(default_factory=list)
+    all_round_outputs: list[dict[str, str]] = field(default_factory=list)
     approve_event: asyncio.Event = field(default_factory=asyncio.Event)
     sse_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
