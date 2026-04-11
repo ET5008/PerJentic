@@ -190,7 +190,7 @@ export default function App() {
             <h1 className="text-xl font-bold text-white tracking-tight">
               Multi-Agent Critique Loop
             </h1>
-            <p className="text-xs text-gray-500">Powered by Perplexity Sonar Pro</p>
+            <p className="text-xs text-gray-500">Powered by Perplexity Agent API</p>
           </div>
           {status !== 'idle' && (
             <div className="ml-auto flex items-center gap-2">
